@@ -30,7 +30,8 @@
     "node": ">=18"
   },
   "scripts": {
-    "test": "node --test"
+    "test": "node --test",
+    "stage": "sh ./stage-publish.sh"
   },
   "dependencies": {
     "commander": "^12.1.0"

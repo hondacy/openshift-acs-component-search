@@ -1,0 +1,4 @@
+# Keep shell scripts LF so they run on Linux/macOS even when checked out on Windows.
+*.sh text eol=lf
+# Windows batch scripts use CRLF.
+*.cmd text eol=crlf
