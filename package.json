@@ -1,0 +1,42 @@
+{
+  "name": "acs-component-search",
+  "version": "1.0.0",
+  "description": "CLI to search Red Hat Advanced Cluster Security (RHACS / StackRox) for deployments running a given image component (e.g. php) and report where, how, and which version.",
+  "keywords": [
+    "rhacs",
+    "acs",
+    "stackrox",
+    "openshift",
+    "kubernetes",
+    "security",
+    "sbom",
+    "component",
+    "vulnerability",
+    "cli"
+  ],
+  "license": "MIT",
+  "author": "devforops",
+  "type": "module",
+  "bin": {
+    "acs-component-search": "bin/cli.js"
+  },
+  "files": [
+    "bin/",
+    "src/",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "test": "node --test"
+  },
+  "dependencies": {
+    "commander": "^12.1.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://www.npmjs.com/~devsops"
+  }
+}
