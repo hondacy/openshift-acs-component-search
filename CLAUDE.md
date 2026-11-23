@@ -29,14 +29,38 @@ JavaScript (no build step). Node `>=18`. Single runtime dep: `commander@^12`.
   (`if (Array.isArray(parsed)) out.push(...parsed)`).
 - Tests: **7/7 passing** after the fix (was 6/7).
 
-### npm upload — BLOCKED (not published)
-- Target: `https://registry.npmjs.org/`, auth token in `~/.npmrc`, account `devsops`.
-- `npm publish --dry-run` OK: 6 files, 6.5 kB tarball, no secrets leaked.
-- `npm publish` **failed: EOTP** — registry requires a one-time password (2FA).
-  The token authenticates but is not an *automation* token, so it cannot complete
-  a publish non-interactively. **`acs-component-search@1.0.0` is NOT on npm.**
-- To finish uploading, do one of:
-  - Create an npm **automation token** (bypasses 2FA), put it in `~/.npmrc`, re-run `npm publish`.
-  - Run `npm publish` interactively and enter the OTP.
-  - `npm publish --otp=<code>` with a fresh authenticator code.
-- Note: the `parseJsonLines` fix is in the working tree but **not committed**.
+### git — committed & pushed
+- Branch **`fix/parse-json-lines-array`** created off `main`, commit `4e220d5`.
+- Contains the `parseJsonLines` fix + this `CLAUDE.md`.
+- Pushed to `origin` (github.com/hondacy/openshift-acs-component-search.git).
+- PR not yet opened: https://github.com/hondacy/openshift-acs-component-search/pull/new/fix/parse-json-lines-array
+- (A later commit updating this file for the staging outcome may follow this note.)
+
+### npm — real 1.0.0 NOT published; a STUB is live
+Target registry: `https://registry.npmjs.org/`, token in `~/.npmrc`, account `devsops`.
+
+Attempts made, in order:
+1. `npm publish` → **EOTP** (registry requires a 2FA one-time password; token is
+   not an automation token, so it can't publish non-interactively).
+2. `npm publish --stage` → `--stage` is **not a valid flag** (npm warns
+   "Unknown cli config", ignores it); same EOTP wall.
+3. `npm stage publish` → this DID reach the registry (`POST /-/stage/package/...`)
+   and created a **staging stub**, not the real package.
+
+Current registry state (`npm view acs-component-search`):
+- `dist-tags.latest = 0.0.0-stage`
+- `versions = ["0.0.0-stage"]` — a placeholder: `description "Temporary package
+  placeholder for staged publishing"`, `stub: true`, 2 files, 342 bytes,
+  created 2026-11-23T10:07:33Z, maintainer `devsops`.
+- **Your real `acs-component-search@1.0.0` is NOT on npm.** Anyone running
+  `npm install acs-component-search` currently gets the empty 0.0.0-stage stub.
+- Re-running `npm stage publish` now fails `E409 Conflict` ("Cannot stage
+  previously published version 1.0.0").
+- npm warned: tokens that bypass 2FA are being restricted —
+  https://gh.io/npm-gat-bypass2fa-deprecation
+
+To actually publish 1.0.0 (needs OTP/automation token, done by the user):
+- `npm publish --otp=<code>` with a fresh authenticator code, OR
+- put an npm **automation token** in `~/.npmrc`, then `npm publish`.
+Open question for the user: whether to clean up / repoint the `0.0.0-stage` stub
+(e.g. move the `latest` dist-tag, or unpublish the stub) once 1.0.0 is up.
