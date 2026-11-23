@@ -41,7 +41,11 @@ export function parseJsonLines(text) {
     const t = line.trim();
     if (!t) continue;
     try {
-      out.push(JSON.parse(t));
+      const parsed = JSON.parse(t);
+      // A line may itself be a JSON array (e.g. the whole body on one line);
+      // flatten it rather than nesting it as a single element.
+      if (Array.isArray(parsed)) out.push(...parsed);
+      else out.push(parsed);
     } catch {
       // Not a standalone JSON object on this line; ignore and keep going.
     }
