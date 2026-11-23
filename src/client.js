@@ -4,6 +4,8 @@
 // full scanned component list — exactly what we need to show where a component
 // runs and at which version.
 
+import { spawn } from 'node:child_process';
+
 /**
  * Normalize a Central endpoint into a clean https base URL with no trailing slash.
  * Accepts "central.example.com", "central.example.com:443", or a full URL.
@@ -63,6 +65,119 @@ export function parseJsonLines(text) {
 }
 
 /**
+ * Build the workloads export URL from a Central endpoint and an ACS query.
+ */
+export function buildWorkloadsUrl(endpoint, query) {
+  const base = normalizeEndpoint(endpoint);
+  const qs = query ? `?query=${encodeURIComponent(query)}` : '';
+  return `${base}/v1/export/vuln-mgmt/workloads${qs}`;
+}
+
+/**
+ * Split a curl response that carries a trailing "__HTTP_STATUS__:<code>" marker
+ * (written via curl --write-out) into { body, status }.
+ */
+export function splitCurlStatus(text) {
+  const marker = '__HTTP_STATUS__:';
+  const at = String(text).lastIndexOf(marker);
+  if (at === -1) return { body: String(text), status: 0 };
+  const body = String(text).slice(0, at).replace(/\n$/, '');
+  const status = parseInt(String(text).slice(at + marker.length).trim(), 10) || 0;
+  return { body, status };
+}
+
+function httpErrorMessage(status, body) {
+  const hint =
+    status === 401 || status === 403
+      ? ' (check that ROX_API_TOKEN is valid and the token role can view images/deployments)'
+      : '';
+  return `ACS API returned ${status}${hint}${body ? `\n${body.slice(0, 800)}` : ''}`;
+}
+
+/**
+ * Fetch the workloads export by shelling out to the system `curl` binary.
+ * This exists for environments Node's global fetch cannot handle on its own:
+ * a SOCKS5 proxy (curl honors ALL_PROXY/HTTPS_PROXY, or an explicit --proxy)
+ * and an untrusted/self-signed Central cert (insecure -> curl -k).
+ *
+ * curl options are passed on stdin via a config file (--config -) so the bearer
+ * token never appears in argv or the environment, where other local processes
+ * could read it.
+ */
+export function fetchWorkloadsViaCurl({
+  endpoint,
+  token,
+  query,
+  timeoutMs = 60000,
+  insecure = false,
+  proxy,
+} = {}) {
+  if (!token) throw new Error('No ACS API token provided (use --token or ROX_API_TOKEN).');
+
+  const base = normalizeEndpoint(endpoint);
+  const url = buildWorkloadsUrl(endpoint, query);
+  const maxTime = Math.max(1, Math.round(timeoutMs / 1000));
+  const bin = process.platform === 'win32' ? 'curl.exe' : 'curl';
+
+  const cfg = [
+    'silent',
+    'show-error',
+    `max-time = ${maxTime}`,
+    `header = "Authorization: Bearer ${token}"`,
+    'header = "Accept: application/json"',
+    'write-out = "\\n__HTTP_STATUS__:%{http_code}"',
+    `url = "${url}"`,
+  ];
+  if (insecure) cfg.push('insecure');
+  if (proxy) cfg.push(`proxy = "${proxy}"`);
+  // With no explicit proxy, curl still honors ALL_PROXY/HTTPS_PROXY from the env.
+
+  return new Promise((resolve, reject) => {
+    const child = spawn(bin, ['--config', '-'], { windowsHide: true });
+    let out = Buffer.alloc(0);
+    let errOut = '';
+
+    child.stdout.on('data', (d) => {
+      out = Buffer.concat([out, d]);
+    });
+    child.stderr.on('data', (d) => {
+      errOut += d.toString();
+    });
+    child.on('error', (err) => {
+      reject(
+        new Error(
+          err.code === 'ENOENT'
+            ? `curl not found on PATH; install curl or run without --curl/--proxy.`
+            : `Could not run curl: ${err.message}`,
+        ),
+      );
+    });
+    child.on('close', (code) => {
+      const { body, status } = splitCurlStatus(out.toString('utf8'));
+      if (status === 0) {
+        reject(
+          new Error(
+            `Could not reach ACS Central at ${base} via curl (exit ${code})` +
+              `${errOut ? `: ${errOut.trim()}` : ''}`,
+          ),
+        );
+        return;
+      }
+      if (status < 200 || status >= 300) {
+        reject(new Error(httpErrorMessage(status, body)));
+        return;
+      }
+      resolve(parseJsonLines(body));
+    });
+
+    child.stdin.on('error', () => {
+      /* ignore EPIPE if curl exits before reading its config */
+    });
+    child.stdin.end(cfg.join('\n') + '\n');
+  });
+}
+
+/**
  * Call the workloads export endpoint and return the parsed stream entries.
  * Each entry looks like: { result: { deployment: {...}, images: [...] } }.
  */
@@ -70,8 +185,7 @@ export async function fetchWorkloads({ endpoint, token, query, timeoutMs = 60000
   if (!token) throw new Error('No ACS API token provided (use --token or ROX_API_TOKEN).');
 
   const base = normalizeEndpoint(endpoint);
-  const qs = query ? `?query=${encodeURIComponent(query)}` : '';
-  const url = `${base}/v1/export/vuln-mgmt/workloads${qs}`;
+  const url = buildWorkloadsUrl(endpoint, query);
 
   let res;
   try {

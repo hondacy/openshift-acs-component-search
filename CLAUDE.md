@@ -64,3 +64,28 @@ To actually publish 1.0.0 (needs OTP/automation token, done by the user):
 - put an npm **automation token** in `~/.npmrc`, then `npm publish`.
 Open question for the user: whether to clean up / repoint the `0.0.0-stage` stub
 (e.g. move the `latest` dist-tag, or unpublish the stub) once 1.0.0 is up.
+
+### SOCKS5 proxy + malformed-cert support (curl transport)
+The target ACS Central is reachable only through a **SOCKS5 proxy** and presents a
+**malformed/self-signed cert**. Node's global `fetch` (undici) can't do SOCKS and
+rejects the cert, so direct requests fail with "could not reach ACS central ...
+fetch failed".
+
+Fix (no new dependencies) — shell out to the system `curl`:
+- `src/client.js`: `fetchWorkloadsViaCurl()` runs `curl --config -`, feeding options
+  (incl. the bearer token) via stdin so the token never hits argv/env. Also
+  `buildWorkloadsUrl()` and `splitCurlStatus()` helpers (both unit-tested).
+- `bin/cli.js`: new flags `--curl` and `--proxy <url>` (`--proxy` implies `--curl`);
+  `--insecure` maps to curl `-k` and no longer flips Node's global TLS flag on the
+  curl path.
+- Proxy comes from `ALL_PROXY`/`HTTPS_PROXY` env (what the user's curl already uses)
+  or from `--proxy`.
+- Usage: `acs-component-search php --curl --insecure` (with `ALL_PROXY` set), or
+  `--proxy socks5h://host:port --insecure`.
+- Tests now **9/9**. Smoke test against an unreachable host returns a clean error.
+
+### Conventions / decisions
+- `src/variables.txt` is intentionally kept in the package (env-var setup notes,
+  token is a placeholder `xxxxx`). Confirmed by the user; `files` ships all of `src/`.
+- Workflow the user wants: after each build, run `npm stage publish`, and on success
+  open `https://www.npmjs.com/settings/devsops/staged-packages` in the browser.

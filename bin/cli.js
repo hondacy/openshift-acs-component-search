@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { Command } from 'commander';
 import { createRequire } from 'node:module';
-import { buildQuery, fetchWorkloads, extractRows } from '../src/client.js';
+import { buildQuery, fetchWorkloads, fetchWorkloadsViaCurl, extractRows } from '../src/client.js';
 import { renderTable, renderSummary } from '../src/format.js';
 
 const require = createRequire(import.meta.url);
@@ -29,7 +29,9 @@ program
   .option('-q, --query <raw>', 'extra raw ACS query clause, appended with AND (e.g. "Fixable:true")')
   .option('--json', 'output raw JSON rows instead of a table')
   .option('--timeout <seconds>', 'request timeout in seconds', '60')
-  .option('--insecure', 'skip TLS certificate verification (self-signed Central certs)')
+  .option('--insecure', 'skip TLS certificate verification (self-signed/malformed Central certs; curl -k)')
+  .option('--curl', 'make the request via the system curl binary instead of Node fetch (needed for SOCKS5 proxies; honors ALL_PROXY/HTTPS_PROXY)')
+  .option('--proxy <url>', 'proxy URL for the request, e.g. socks5h://127.0.0.1:1080 (implies --curl)')
   .addHelpText(
     'after',
     `
@@ -45,6 +47,14 @@ Examples:
   $ acs-component-search php --component-version 7.4
   $ acs-component-search openssl -n production --json
   $ acs-component-search log4j -q Fixable:true
+
+Proxies and self-signed certs:
+  Behind a SOCKS5 proxy and/or a Central with a self-signed/malformed cert,
+  route the request through the system curl binary:
+  $ export ALL_PROXY=socks5h://127.0.0.1:1080
+  $ acs-component-search php --curl --insecure
+  Or pass the proxy explicitly (implies --curl):
+  $ acs-component-search php --proxy socks5h://127.0.0.1:1080 --insecure
 `,
   )
   .action(async (component, opts) => {
@@ -55,11 +65,13 @@ Examples:
     if (!token) fail('Missing ACS API token. Set ROX_API_TOKEN or pass --token.');
 
     const timeoutMs = Math.max(1, Number(opts.timeout) || 60) * 1000;
+    const useCurl = Boolean(opts.curl || opts.proxy);
 
     if (opts.insecure) {
-      // Global, process-wide: there is no per-request TLS opt-out with global fetch.
-      process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
       process.emitWarning('TLS certificate verification disabled (--insecure).');
+      // The Node fetch path has no per-request TLS opt-out, so toggle it globally.
+      // The curl path passes -k instead and needs no process-wide change.
+      if (!useCurl) process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
     }
 
     const query = buildQuery({
@@ -73,7 +85,16 @@ Examples:
 
     let items;
     try {
-      items = await fetchWorkloads({ endpoint, token, query, timeoutMs });
+      items = useCurl
+        ? await fetchWorkloadsViaCurl({
+            endpoint,
+            token,
+            query,
+            timeoutMs,
+            insecure: Boolean(opts.insecure),
+            proxy: opts.proxy,
+          })
+        : await fetchWorkloads({ endpoint, token, query, timeoutMs });
     } catch (err) {
       fail(err.message);
     }

@@ -4,6 +4,8 @@ import {
   normalizeEndpoint,
   buildQuery,
   parseJsonLines,
+  buildWorkloadsUrl,
+  splitCurlStatus,
   extractRows,
 } from '../src/client.js';
 import { renderTable, renderSummary } from '../src/format.js';
@@ -31,6 +33,29 @@ test('parseJsonLines parses newline-delimited objects', () => {
 test('parseJsonLines falls back to a single JSON document', () => {
   assert.deepEqual(parseJsonLines('[{"a":1}]'), [{ a: 1 }]);
   assert.deepEqual(parseJsonLines('{"a":1}'), [{ a: 1 }]);
+});
+
+test('buildWorkloadsUrl builds the export URL with an encoded query', () => {
+  assert.equal(
+    buildWorkloadsUrl('central.example.com:443', 'Component:php+Namespace:prod'),
+    'https://central.example.com:443/v1/export/vuln-mgmt/workloads?query=Component%3Aphp%2BNamespace%3Aprod',
+  );
+  assert.equal(
+    buildWorkloadsUrl('https://central.example.com/', ''),
+    'https://central.example.com/v1/export/vuln-mgmt/workloads',
+  );
+});
+
+test('splitCurlStatus separates body from the trailing status marker', () => {
+  assert.deepEqual(splitCurlStatus('{"a":1}\n__HTTP_STATUS__:200'), {
+    body: '{"a":1}',
+    status: 200,
+  });
+  // No marker (e.g. curl failed before writing it) -> status 0, body unchanged.
+  assert.deepEqual(splitCurlStatus('curl: (7) connection refused'), {
+    body: 'curl: (7) connection refused',
+    status: 0,
+  });
 });
 
 const sample = [

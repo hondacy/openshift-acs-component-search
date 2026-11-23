@@ -1,0 +1,3 @@
+# Varibales needed for operation:
+$env:ROX_ENDPOINT=https://central-stackrox.app.ocp.example.com
+$env:ROX_API_TOKEN=xxxxx
