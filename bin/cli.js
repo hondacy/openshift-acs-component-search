@@ -31,8 +31,8 @@ program
   .option('--csv', 'output matching rows as CSV instead of a table')
   .option('--timeout <seconds>', 'request timeout in seconds', '60')
   .option('--no-insecure', 'enforce TLS certificate verification (verification is SKIPPED by default for self-signed/malformed Central certs)')
-  .option('--no-curl', 'use Node fetch instead of the system curl binary (curl is the DEFAULT transport; needed for SOCKS5 proxies, honors ALL_PROXY/HTTPS_PROXY)')
-  .option('--proxy <url>', 'proxy URL for the request, e.g. socks5h://127.0.0.1:1080 (uses curl)')
+  .option('--no-curl', 'use the pure-Node transport instead of the system curl binary (curl is the DEFAULT; the Node path also handles SOCKS5 proxies and insecure certs, honors ALL_PROXY/HTTPS_PROXY, and needs no curl)')
+  .option('--proxy <url>', 'SOCKS5 proxy URL, e.g. socks5h://127.0.0.1:1080 (works on both the curl and Node paths)')
   .addHelpText(
     'after',
     `
@@ -58,8 +58,11 @@ Proxies and self-signed certs:
   $ acs-component-search php
   Point at a proxy explicitly:
   $ acs-component-search php --proxy socks5h://127.0.0.1:1080
+  No curl on the box? The Node transport handles the SOCKS5 proxy and the
+  self-signed cert on its own:
+  $ acs-component-search php --no-curl
   For a Central with a valid cert over a direct connection, opt back into
-  Node fetch and TLS verification:
+  the Node transport and TLS verification:
   $ acs-component-search php --no-curl --no-insecure
 `,
   )
@@ -71,7 +74,9 @@ Proxies and self-signed certs:
     if (!token) fail('Missing ACS API token. Set ROX_API_TOKEN or pass --token.');
 
     const timeoutMs = Math.max(1, Number(opts.timeout) || 60) * 1000;
-    const useCurl = Boolean(opts.curl || opts.proxy);
+    // curl is the default transport; --no-curl switches to the pure-Node path,
+    // which also handles SOCKS5 proxies, so --proxy no longer forces curl.
+    const useCurl = opts.curl !== false;
 
     if (opts.insecure) {
       process.emitWarning('TLS certificate verification disabled (default; pass --no-insecure to enforce it).');
@@ -100,7 +105,14 @@ Proxies and self-signed certs:
             insecure: Boolean(opts.insecure),
             proxy: opts.proxy,
           })
-        : await fetchWorkloads({ endpoint, token, query, timeoutMs });
+        : await fetchWorkloads({
+            endpoint,
+            token,
+            query,
+            timeoutMs,
+            insecure: Boolean(opts.insecure),
+            proxy: opts.proxy,
+          });
     } catch (err) {
       fail(err.message);
     }

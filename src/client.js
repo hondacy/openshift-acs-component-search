@@ -5,6 +5,9 @@
 // runs and at which version.
 
 import { spawn } from 'node:child_process';
+import net from 'node:net';
+import tls from 'node:tls';
+import http from 'node:http';
 
 /**
  * Normalize a Central endpoint into a clean https base URL with no trailing slash.
@@ -178,14 +181,241 @@ export function fetchWorkloadsViaCurl({
 }
 
 /**
+ * Resolve the proxy to use for the Node transport, from an explicit value or the
+ * same environment variables curl honors. Returns a descriptor for SOCKS5
+ * proxies, or null to connect directly.
+ *
+ * Only SOCKS5 is handled in pure Node here (that is the environment this tool
+ * targets). An explicit non-SOCKS proxy throws with a pointer to --curl; a
+ * non-SOCKS proxy coming only from the environment is ignored (direct connect),
+ * matching the prior fetch-path behavior.
+ */
+export function resolveProxy(explicit) {
+  const fromEnv =
+    process.env.ALL_PROXY ||
+    process.env.all_proxy ||
+    process.env.HTTPS_PROXY ||
+    process.env.https_proxy;
+  const raw = explicit || fromEnv;
+  if (!raw) return null;
+
+  let u;
+  try {
+    u = new URL(raw);
+  } catch {
+    throw new Error(`Invalid proxy URL: ${raw}`);
+  }
+  const scheme = u.protocol.replace(/:$/, '').toLowerCase();
+
+  if (scheme === 'socks5' || scheme === 'socks5h' || scheme === 'socks') {
+    return {
+      host: u.hostname,
+      port: u.port ? Number(u.port) : 1080,
+      username: u.username ? decodeURIComponent(u.username) : undefined,
+      password: u.password ? decodeURIComponent(u.password) : undefined,
+    };
+  }
+  if (scheme === 'socks4' || scheme === 'socks4a') {
+    throw new Error(`SOCKS4 proxies are not supported on the Node path; re-run with --curl (${raw}).`);
+  }
+  // http/https or anything else.
+  if (explicit) {
+    throw new Error(`Only SOCKS5 proxies are supported on the Node path; re-run with --curl for ${raw}.`);
+  }
+  return null;
+}
+
+/** Build the SOCKS5 greeting (version + offered auth methods). */
+export function buildSocks5Greeting(withAuth) {
+  const methods = withAuth ? [0x00, 0x02] : [0x00];
+  return Buffer.from([0x05, methods.length, ...methods]);
+}
+
+/** Build a SOCKS5 username/password auth message (RFC 1929). */
+export function buildSocks5UserPassAuth(username, password) {
+  const u = Buffer.from(String(username ?? ''), 'utf8');
+  const p = Buffer.from(String(password ?? ''), 'utf8');
+  return Buffer.concat([Buffer.from([0x01, u.length]), u, Buffer.from([p.length]), p]);
+}
+
+/** Build a SOCKS5 CONNECT request for a destination host:port (ATYP=domain). */
+export function buildSocks5Connect(host, port) {
+  const h = Buffer.from(String(host), 'utf8');
+  if (h.length > 255) throw new Error(`Destination host too long for SOCKS5: ${host}`);
+  const p = Buffer.alloc(2);
+  p.writeUInt16BE(Number(port), 0);
+  return Buffer.concat([Buffer.from([0x05, 0x01, 0x00, 0x03, h.length]), h, p]);
+}
+
+/**
+ * Open a TCP tunnel to destHost:destPort through a SOCKS5 proxy, returning the
+ * connected socket. Pure Node (net), no external dependency or curl binary.
+ */
+function socks5Connect({ proxy, destHost, destPort, timeoutMs }) {
+  return new Promise((resolve, reject) => {
+    const socket = net.connect({ host: proxy.host, port: proxy.port });
+    let stage = 'greeting';
+    let buf = Buffer.alloc(0);
+    let settled = false;
+
+    const timer = setTimeout(() => done(new Error('SOCKS5 proxy handshake timed out')), timeoutMs);
+    function done(err, result) {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (err) {
+        socket.destroy();
+        reject(err);
+      } else {
+        resolve(result);
+      }
+    }
+
+    socket.on('error', (e) => done(new Error(`SOCKS5 proxy connection error (${proxy.host}:${proxy.port}): ${e.message}`)));
+    socket.on('close', () => done(new Error('SOCKS5 proxy closed the connection during handshake')));
+
+    socket.on('connect', () => {
+      socket.write(buildSocks5Greeting(Boolean(proxy.username)));
+    });
+
+    function sendConnect() {
+      stage = 'request';
+      socket.write(buildSocks5Connect(destHost, destPort));
+    }
+
+    socket.on('data', (d) => {
+      buf = Buffer.concat([buf, d]);
+      if (stage === 'greeting') {
+        if (buf.length < 2) return;
+        if (buf[0] !== 0x05) return done(new Error('Proxy did not speak SOCKS5'));
+        const method = buf[1];
+        buf = buf.subarray(2);
+        if (method === 0x00) return sendConnect();
+        if (method === 0x02) {
+          if (!proxy.username) return done(new Error('SOCKS5 proxy requires authentication but none was provided'));
+          stage = 'auth';
+          socket.write(buildSocks5UserPassAuth(proxy.username, proxy.password));
+          return;
+        }
+        return done(new Error('SOCKS5 proxy offered no acceptable authentication method'));
+      }
+      if (stage === 'auth') {
+        if (buf.length < 2) return;
+        const status = buf[1];
+        buf = buf.subarray(2);
+        if (status !== 0x00) return done(new Error('SOCKS5 proxy authentication failed'));
+        return sendConnect();
+      }
+      if (stage === 'request') {
+        if (buf.length < 4) return;
+        const rep = buf[1];
+        if (rep !== 0x00) return done(new Error(`SOCKS5 proxy refused the connection (reply code ${rep})`));
+        const atyp = buf[3];
+        let need = 4;
+        if (atyp === 0x01) need += 4 + 2;
+        else if (atyp === 0x04) need += 16 + 2;
+        else if (atyp === 0x03) {
+          if (buf.length < 5) return;
+          need += 1 + buf[4] + 2;
+        } else return done(new Error('SOCKS5 proxy returned an unknown address type'));
+        if (buf.length < need) return;
+
+        // Tunnel is up. Detach our parser; hand the socket (plus any bytes that
+        // arrived after the reply) to the caller for the TLS handshake.
+        socket.removeAllListeners('data');
+        socket.removeAllListeners('close');
+        const leftover = buf.subarray(need);
+        if (leftover.length) socket.unshift(leftover);
+        done(null, socket);
+      }
+    });
+  });
+}
+
+/**
+ * Fetch the workloads export through a SOCKS5 proxy using only Node core
+ * (net + tls + http) — a curl-free transport for the proxied/self-signed-cert
+ * environment. Returns { status, body }.
+ */
+async function requestViaSocks({ url, token, proxy, insecure, timeoutMs }) {
+  const target = new URL(url);
+  const destPort = target.port ? Number(target.port) : 443;
+  const tunnel = await socks5Connect({ proxy, destHost: target.hostname, destPort, timeoutMs });
+
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = (err, value) => {
+      if (settled) return;
+      settled = true;
+      if (err) {
+        tunnel.destroy();
+        reject(err);
+      } else resolve(value);
+    };
+
+    const tlsSocket = tls.connect(
+      { socket: tunnel, servername: target.hostname, rejectUnauthorized: !insecure },
+      () => {
+        const req = http.request(
+          {
+            createConnection: () => tlsSocket,
+            method: 'GET',
+            host: target.hostname,
+            port: destPort,
+            path: target.pathname + target.search,
+            headers: {
+              Host: target.host,
+              Authorization: `Bearer ${token}`,
+              Accept: 'application/json',
+              Connection: 'close',
+            },
+            timeout: timeoutMs,
+          },
+          (res) => {
+            let body = '';
+            res.setEncoding('utf8');
+            res.on('data', (c) => (body += c));
+            res.on('end', () => finish(null, { status: res.statusCode || 0, body }));
+          },
+        );
+        req.on('timeout', () => {
+          req.destroy(new Error(`Request through SOCKS5 proxy timed out after ${Math.round(timeoutMs / 1000)}s`));
+        });
+        req.on('error', (e) => finish(e));
+        req.end();
+      },
+    );
+    tlsSocket.on('error', (e) => finish(new Error(`TLS error to ${target.hostname}: ${e.message}`)));
+  });
+}
+
+/**
  * Call the workloads export endpoint and return the parsed stream entries.
  * Each entry looks like: { result: { deployment: {...}, images: [...] } }.
+ *
+ * Uses Node's global fetch for direct connections. When a SOCKS5 proxy is
+ * configured (via `proxy` or ALL_PROXY/HTTPS_PROXY), it routes through a
+ * pure-Node SOCKS5 tunnel instead, so no `curl` binary is required.
  */
-export async function fetchWorkloads({ endpoint, token, query, timeoutMs = 60000 }) {
+export async function fetchWorkloads({ endpoint, token, query, timeoutMs = 60000, insecure = false, proxy } = {}) {
   if (!token) throw new Error('No ACS API token provided (use --token or ROX_API_TOKEN).');
 
   const base = normalizeEndpoint(endpoint);
   const url = buildWorkloadsUrl(endpoint, query);
+
+  const socksProxy = resolveProxy(proxy);
+  if (socksProxy) {
+    let result;
+    try {
+      result = await requestViaSocks({ url, token, proxy: socksProxy, insecure, timeoutMs });
+    } catch (err) {
+      throw new Error(`Could not reach ACS Central at ${base} via SOCKS5 proxy: ${err.message}`);
+    }
+    if (result.status < 200 || result.status >= 300) {
+      throw new Error(httpErrorMessage(result.status, result.body));
+    }
+    return parseJsonLines(result.body);
+  }
 
   let res;
   try {

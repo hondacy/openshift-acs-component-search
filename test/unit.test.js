@@ -7,6 +7,10 @@ import {
   buildWorkloadsUrl,
   splitCurlStatus,
   extractRows,
+  resolveProxy,
+  buildSocks5Greeting,
+  buildSocks5UserPassAuth,
+  buildSocks5Connect,
 } from '../src/client.js';
 import { renderTable, renderSummary, renderCsv, csvField } from '../src/format.js';
 
@@ -56,6 +60,44 @@ test('splitCurlStatus separates body from the trailing status marker', () => {
     body: 'curl: (7) connection refused',
     status: 0,
   });
+});
+
+test('resolveProxy parses SOCKS5 URLs and ignores/validates others', () => {
+  const savedEnv = { ...process.env };
+  for (const k of ['ALL_PROXY', 'all_proxy', 'HTTPS_PROXY', 'https_proxy']) delete process.env[k];
+
+  assert.deepEqual(resolveProxy('socks5h://user:pass@host:1080'), {
+    host: 'host',
+    port: 1080,
+    username: 'user',
+    password: 'pass',
+  });
+  // Default SOCKS port when omitted, no credentials.
+  assert.deepEqual(resolveProxy('socks5://proxy.local'), {
+    host: 'proxy.local',
+    port: 1080,
+    username: undefined,
+    password: undefined,
+  });
+  assert.equal(resolveProxy(undefined), null);
+  // An explicit non-SOCKS proxy is an error (points user at --curl).
+  assert.throws(() => resolveProxy('http://p:8080'), /SOCKS5/);
+  assert.throws(() => resolveProxy('socks4://p:1080'), /SOCKS4/);
+  // Falls back to the environment when no explicit proxy is given.
+  process.env.ALL_PROXY = 'socks5h://envhost:9050';
+  assert.equal(resolveProxy(undefined).host, 'envhost');
+  assert.equal(resolveProxy(undefined).port, 9050);
+
+  process.env = savedEnv;
+});
+
+test('SOCKS5 message builders encode the protocol bytes', () => {
+  assert.deepEqual([...buildSocks5Greeting(false)], [0x05, 0x01, 0x00]);
+  assert.deepEqual([...buildSocks5Greeting(true)], [0x05, 0x02, 0x00, 0x02]);
+  // RFC 1929: VER=1, ULEN, user, PLEN, pass.
+  assert.deepEqual([...buildSocks5UserPassAuth('ab', 'xyz')], [0x01, 2, 0x61, 0x62, 3, 0x78, 0x79, 0x7a]);
+  // CONNECT to host:443 as a domain (ATYP=3): VER CMD RSV ATYP LEN host port.
+  assert.deepEqual([...buildSocks5Connect('h', 443)], [0x05, 0x01, 0x00, 0x03, 1, 0x68, 0x01, 0xbb]);
 });
 
 const sample = [

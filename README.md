@@ -43,8 +43,8 @@ acs-component-search <component> [options]
 | `--json` | Output JSON rows instead of a table |
 | `--csv` | Output matching rows as CSV instead of a table |
 | `--timeout <seconds>` | Request timeout (default 60) |
-| `--proxy <url>` | Proxy URL, e.g. `socks5h://127.0.0.1:1080` (uses curl) |
-| `--no-curl` | Use Node `fetch` instead of the system `curl` binary (**curl is the default** transport; needed for SOCKS5 proxies, honors `ALL_PROXY`/`HTTPS_PROXY`) |
+| `--proxy <url>` | SOCKS5 proxy URL, e.g. `socks5h://127.0.0.1:1080` (works on both transports) |
+| `--no-curl` | Use the pure-Node transport instead of the system `curl` binary (**curl is the default**; the Node path also handles SOCKS5 proxies and self-signed certs, honors `ALL_PROXY`/`HTTPS_PROXY`, and needs no `curl`) |
 | `--no-insecure` | Enforce TLS verification (**verification is skipped by default** for self-signed/malformed Central certs) |
 
 The component name is a **substring** match, so `php` matches `php`, `php-cli`, `php-fpm`, etc.
