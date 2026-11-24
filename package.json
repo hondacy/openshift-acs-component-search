@@ -1,6 +1,6 @@
 {
   "name": "acs-component-search",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "description": "CLI to search Red Hat Advanced Cluster Security (RHACS / StackRox) for deployments running a given image component (e.g. php) and report where, how, and which version.",
   "keywords": [
     "rhacs",

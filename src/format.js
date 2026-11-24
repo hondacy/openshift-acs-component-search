@@ -1,5 +1,39 @@
 // Output formatting for acs-component-search.
 
+const CSV_COLUMNS = [
+  { key: 'cluster', header: 'cluster' },
+  { key: 'namespace', header: 'namespace' },
+  { key: 'deployment', header: 'deployment' },
+  { key: 'deploymentType', header: 'kind' },
+  { key: 'component', header: 'component' },
+  { key: 'version', header: 'version' },
+  { key: 'image', header: 'image' },
+  { key: 'vulnCount', header: 'cves' },
+  { key: 'fixableCount', header: 'fixable' },
+];
+
+/**
+ * Escape a single CSV field per RFC 4180: wrap in double quotes and double any
+ * embedded quote when the value contains a comma, quote, or newline.
+ */
+export function csvField(value) {
+  const s = String(value ?? '');
+  if (/[",\r\n]/.test(s)) return '"' + s.replace(/"/g, '""') + '"';
+  return s;
+}
+
+/**
+ * Render matching rows as RFC 4180 CSV (header row + one row per match).
+ */
+export function renderCsv(rows) {
+  const lines = [CSV_COLUMNS.map((c) => csvField(c.header)).join(',')];
+  for (const r of rows) {
+    lines.push(CSV_COLUMNS.map((c) => csvField(r[c.key])).join(','));
+  }
+  // CRLF line endings are what RFC 4180 specifies and what Excel expects.
+  return lines.join('\r\n');
+}
+
 function pad(str, width) {
   const s = String(str ?? '');
   return s.length >= width ? s : s + ' '.repeat(width - s.length);

@@ -2,7 +2,7 @@
 import { Command } from 'commander';
 import { createRequire } from 'node:module';
 import { buildQuery, fetchWorkloads, fetchWorkloadsViaCurl, extractRows } from '../src/client.js';
-import { renderTable, renderSummary } from '../src/format.js';
+import { renderTable, renderSummary, renderCsv } from '../src/format.js';
 
 const require = createRequire(import.meta.url);
 const pkg = require('../package.json');
@@ -28,6 +28,7 @@ program
   .option('-d, --deployment <name>', 'limit to a deployment')
   .option('-q, --query <raw>', 'extra raw ACS query clause, appended with AND (e.g. "Fixable:true")')
   .option('--json', 'output raw JSON rows instead of a table')
+  .option('--csv', 'output matching rows as CSV instead of a table')
   .option('--timeout <seconds>', 'request timeout in seconds', '60')
   .option('--insecure', 'skip TLS certificate verification (self-signed/malformed Central certs; curl -k)')
   .option('--curl', 'make the request via the system curl binary instead of Node fetch (needed for SOCKS5 proxies; honors ALL_PROXY/HTTPS_PROXY)')
@@ -46,6 +47,7 @@ Examples:
   $ acs-component-search php
   $ acs-component-search php --component-version 7.4
   $ acs-component-search openssl -n production --json
+  $ acs-component-search openssl -n production --csv > openssl.csv
   $ acs-component-search log4j -q Fixable:true
 
 Proxies and self-signed certs:
@@ -106,6 +108,13 @@ Proxies and self-signed certs:
 
     if (opts.json) {
       process.stdout.write(JSON.stringify(rows, null, 2) + '\n');
+      return;
+    }
+
+    if (opts.csv) {
+      process.stdout.write(renderCsv(rows) + '\n');
+      // Non-zero exit when nothing matched, so scripts/CI can branch on it.
+      if (rows.length === 0) process.exitCode = 1;
       return;
     }
 

@@ -9,7 +9,7 @@
 #
 # Any failing step aborts the script (set -e) and the browser is NOT opened.
 
-set -euo pipefail
+#set -euo pipefail
 
 STAGE_URL="https://www.npmjs.com/settings/devsops/staged-packages"
 
@@ -32,6 +32,16 @@ npm test
 
 echo "[4/4] Stage publishing..."
 npm stage publish
+status=$?
+if [ "$status" -ne 0 ]; then
+  echo ""
+  echo "ERROR: 'npm stage publish' failed with exit code $status." >&2
+  echo "Not opening $STAGE_URL." >&2
+  # Hold the terminal open so the error stays visible (e.g. when launched
+  # from Explorer / double-click, where the window would otherwise close).
+  read -r -p "Press Enter to close..."
+  exit "$status"
+fi
 
 echo "Stage publish succeeded. Opening $STAGE_URL"
 if command -v xdg-open >/dev/null 2>&1; then
@@ -45,4 +55,9 @@ elif command -v cmd.exe >/dev/null 2>&1; then
 else
   echo "Could not detect a browser opener; open this URL manually:"
   echo "  $STAGE_URL"
+fi
+
+# keep the terminal open on Windows when run from Explorer
+if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "win32" || "$OSTYPE" == "cygwin" ]]; then
+  read -p "Press Enter to exit..."
 fi

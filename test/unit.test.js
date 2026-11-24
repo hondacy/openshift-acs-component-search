@@ -8,7 +8,7 @@ import {
   splitCurlStatus,
   extractRows,
 } from '../src/client.js';
-import { renderTable, renderSummary } from '../src/format.js';
+import { renderTable, renderSummary, renderCsv, csvField } from '../src/format.js';
 
 test('normalizeEndpoint adds scheme and strips trailing slash', () => {
   assert.equal(normalizeEndpoint('central.example.com:443'), 'https://central.example.com:443');
@@ -112,4 +112,25 @@ test('renderTable and renderSummary produce output', () => {
   assert.match(summary, /2 matches/);
   assert.match(summary, /1 deployment/);
   assert.match(summary, /7\.4\.3/);
+});
+
+test('csvField quotes and escapes per RFC 4180', () => {
+  assert.equal(csvField('plain'), 'plain');
+  assert.equal(csvField(null), '');
+  assert.equal(csvField('a,b'), '"a,b"');
+  assert.equal(csvField('say "hi"'), '"say ""hi"""');
+  assert.equal(csvField('line1\nline2'), '"line1\nline2"');
+  assert.equal(csvField(5), '5');
+});
+
+test('renderCsv emits a header and one CRLF-terminated row per match', () => {
+  const rows = extractRows(sample, { component: 'php' });
+  const csv = renderCsv(rows);
+  const lines = csv.split('\r\n');
+  assert.equal(lines.length, 3); // header + 2 rows
+  assert.equal(lines[0], 'cluster,namespace,deployment,kind,component,version,image,cves,fixable');
+  assert.match(lines[1], /^east,prod,web,Deployment,php,7\.4\.3,registry\/web:1\.2,2,1$/);
+
+  // Empty result still yields a header-only document.
+  assert.equal(renderCsv([]), 'cluster,namespace,deployment,kind,component,version,image,cves,fixable');
 });
