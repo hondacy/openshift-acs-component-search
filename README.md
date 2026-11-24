@@ -41,6 +41,7 @@ acs-component-search <component> [options]
 | `-d, --deployment <name>` | Limit to a deployment |
 | `-q, --query <raw>` | Extra raw ACS query clause, ANDed in (e.g. `Fixable:true`) |
 | `--json` | Output JSON rows instead of a table |
+| `--csv` | Output matching rows as CSV instead of a table |
 | `--timeout <seconds>` | Request timeout (default 60) |
 | `--insecure` | Skip TLS verification (self-signed Central certs) |
 
@@ -70,6 +71,12 @@ Narrow to a specific version and namespace, as JSON for scripting:
 acs-component-search php --component-version 7.4 -n shop --json
 ```
 
+Export matches to a spreadsheet-friendly CSV file:
+
+```bash
+acs-component-search openssl -n production --csv > openssl.csv
+```
+
 Only components with a fixable CVE:
 
 ```bash
@@ -80,7 +87,7 @@ acs-component-search log4j -q Fixable:true
 
 | Code | Meaning |
 | --- | --- |
-| `0` | Matches found (or `--json` output produced) |
+| `0` | Matches found (or `--json`/`--csv` output produced) |
 | `1` | No matching components found |
 | `2` | Error (missing auth, API/network failure, bad arguments) |
 
