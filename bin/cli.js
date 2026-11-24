@@ -30,9 +30,9 @@ program
   .option('--json', 'output raw JSON rows instead of a table')
   .option('--csv', 'output matching rows as CSV instead of a table')
   .option('--timeout <seconds>', 'request timeout in seconds', '60')
-  .option('--insecure', 'skip TLS certificate verification (self-signed/malformed Central certs; curl -k)')
-  .option('--curl', 'make the request via the system curl binary instead of Node fetch (needed for SOCKS5 proxies; honors ALL_PROXY/HTTPS_PROXY)')
-  .option('--proxy <url>', 'proxy URL for the request, e.g. socks5h://127.0.0.1:1080 (implies --curl)')
+  .option('--no-insecure', 'enforce TLS certificate verification (verification is SKIPPED by default for self-signed/malformed Central certs)')
+  .option('--no-curl', 'use Node fetch instead of the system curl binary (curl is the DEFAULT transport; needed for SOCKS5 proxies, honors ALL_PROXY/HTTPS_PROXY)')
+  .option('--proxy <url>', 'proxy URL for the request, e.g. socks5h://127.0.0.1:1080 (uses curl)')
   .addHelpText(
     'after',
     `
@@ -51,12 +51,16 @@ Examples:
   $ acs-component-search log4j -q Fixable:true
 
 Proxies and self-signed certs:
-  Behind a SOCKS5 proxy and/or a Central with a self-signed/malformed cert,
-  route the request through the system curl binary:
+  By default requests go through the system curl binary with TLS verification
+  disabled, which suits a Central behind a SOCKS5 proxy and/or presenting a
+  self-signed/malformed cert:
   $ export ALL_PROXY=socks5h://127.0.0.1:1080
-  $ acs-component-search php --curl --insecure
-  Or pass the proxy explicitly (implies --curl):
-  $ acs-component-search php --proxy socks5h://127.0.0.1:1080 --insecure
+  $ acs-component-search php
+  Point at a proxy explicitly:
+  $ acs-component-search php --proxy socks5h://127.0.0.1:1080
+  For a Central with a valid cert over a direct connection, opt back into
+  Node fetch and TLS verification:
+  $ acs-component-search php --no-curl --no-insecure
 `,
   )
   .action(async (component, opts) => {
@@ -70,7 +74,7 @@ Proxies and self-signed certs:
     const useCurl = Boolean(opts.curl || opts.proxy);
 
     if (opts.insecure) {
-      process.emitWarning('TLS certificate verification disabled (--insecure).');
+      process.emitWarning('TLS certificate verification disabled (default; pass --no-insecure to enforce it).');
       // The Node fetch path has no per-request TLS opt-out, so toggle it globally.
       // The curl path passes -k instead and needs no process-wide change.
       if (!useCurl) process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
